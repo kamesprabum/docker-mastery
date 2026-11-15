@@ -1,4 +1,22 @@
-name: Phase 3 - CI/CD (cache, scan, push to Docker Hub & ECR)
+name: "[REFERENCE ONLY] Phase 3 CI/CD — not auto-executed by GitHub"
+
+# =============================================================
+# ⚠️  THIS FILE IS A REFERENCE COPY — IT DOES NOT AUTO-RUN.
+# =============================================================
+# GitHub Actions only discovers and executes workflow files
+# that live directly under the REPOSITORY ROOT at:
+#   .github/workflows/
+#
+# This file is located at:
+#   phase3-advanced/.github/workflows/ci-cd.yml
+#
+# GitHub will NEVER automatically trigger it. It exists here
+# purely for educational reference — to keep the Phase 3
+# pipeline logic co-located with the Phase 3 application code.
+#
+# THE EXECUTABLE WORKFLOW IS AT:
+#   .github/workflows/ci-cd.yml   ← this is what GitHub runs
+# =============================================================
 
 on:
   push:
@@ -15,15 +33,19 @@ defaults:
   run:
     working-directory: phase3-advanced
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
-  IMAGE_NAME: docker-mastery-demo
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: docker-mastery-demo
+  IMAGE_NAME: docker-mastery
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
 jobs:
-  # ---------------------------------------------------------
-  # 1. Lint + unit test - fail fast before touching Docker at all
-  # ---------------------------------------------------------
+  # ===========================================================
+  # JOB 1 — Lint & Test
+  # ===========================================================
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest
@@ -34,29 +56,26 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
       - name: Lint with flake8
         run: flake8 app test_main.py --max-line-length=100
 
-      - name: Run tests
+      - name: Run pytest
         run: pytest -v
 
-  # ---------------------------------------------------------
-  # 2. Build the image once (with cache), scan it, then push
-  #    the SAME already-built image to both registries.
-  # ---------------------------------------------------------
+  # ===========================================================
+  # JOB 2 — Build → Scan → Push
+  # ===========================================================
   build-scan-push:
     name: Build, Scan & Push
     needs: lint-and-test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compute image tags (commit SHA + latest + git tag if present)
+      - name: Compute image tags
         id: meta
         run: |
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
@@ -70,8 +89,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ---- Build with GitHub Actions layer cache (fast repeat builds) ----
-      - name: Build image (load locally, cached, not pushed yet)
+      # Build context: phase3-advanced (where the Dockerfile lives)
+      - name: Build image (cached, local only — not pushed yet)
         uses: docker/build-push-action@v6
         with:
           context: phase3-advanced
@@ -83,23 +102,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ---- Vulnerability scan BEFORE anything gets pushed ----
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
           format: table
           severity: CRITICAL,HIGH
-          exit-code: "1"   # fail the pipeline if critical/high vulns are found
+          exit-code: "1"
 
-      # ---- Docker Hub push ----
+      # Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Tag & push to Docker Hub
+      - name: Push to Docker Hub
         run: |
           DH_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }} "$DH_REPO:${{ steps.meta.outputs.sha_tag }}"
@@ -111,19 +129,21 @@ jobs:
             docker push "$DH_REPO:${{ steps.meta.outputs.version_tag }}"
           fi
 
-      # ---- AWS ECR push ----
-      - name: Configure AWS credentials
+      # AWS ECR via OIDC
+      # IAM role : arn:aws:iam::007924090234:role/github-actions-ecr-push
+      # ECR repo : arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-ecr-push
 
       - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Tag & push to Amazon ECR
+      - name: Push to Amazon ECR
         run: |
           ECR_REPO="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }} "$ECR_REPO:${{ steps.meta.outputs.sha_tag }}"

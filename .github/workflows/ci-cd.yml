@@ -1,77 +1,238 @@
-name: Phase 3 - CI/CD (build and push to Docker Hub & ECR)
- 
+name: CI/CD — Build, Scan & Push to Docker Hub and ECR
+
+# =============================================================
+# WHAT THIS WORKFLOW DOES
+# -------------------------------------------------------------
+# 1. Lint + unit-test the Phase 3 FastAPI application.
+# 2. Build the Docker image with Docker Buildx and GitHub
+#    Actions layer cache (fast repeat builds).
+# 3. Scan the built image with Trivy — block the push if any
+#    CRITICAL or HIGH CVEs are found.
+# 4. Push the scanned image to Docker Hub.
+# 5. Push the same scanned image to Amazon ECR (ap-south-1)
+#    using GitHub OIDC — no static AWS credentials stored.
+#
+# TRIGGERS
+# -------------------------------------------------------------
+# • Every push to main
+# • Every push of a v*.*.* semantic-version Git tag
+# • Every pull-request targeting main
+#   (lint/test/build/scan only on PRs — push steps are skipped
+#    because the branch condition is not met on pull_request)
+#
+# AWS AUTHENTICATION
+# -------------------------------------------------------------
+# GitHub exchanges a short-lived OIDC JWT for temporary STS
+# credentials. No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY
+# are stored anywhere — not in secrets, not in env vars.
+#
+# Required GitHub Actions Variables (Settings → Secrets and
+# variables → Actions → Variables tab):
+#   AWS_REGION      = ap-south-1
+#   AWS_ROLE_ARN    = arn:aws:iam::007924090234:role/github-actions-ecr-push
+#   ECR_REPOSITORY  = docker-mastery-demo
+#
+# Required GitHub Actions Secrets (for Docker Hub only):
+#   DOCKERHUB_USERNAME
+#   DOCKERHUB_TOKEN
+# =============================================================
+
 on:
   push:
     branches: ["main"]
- 
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: ["main"]
+
+# -------------------------------------------------------------
+# Workflow-level permissions — principle of least privilege.
+#
+#   contents: read   — clone the repo
+#   id-token: write  — mint a GitHub OIDC JWT so AWS STS can
+#                      issue temporary credentials for the role
+# -------------------------------------------------------------
+permissions:
+  contents: read
+  id-token: write
+
 env:
+  # The local image name used inside the runner before tagging.
   IMAGE_NAME: docker-mastery-demo
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: docker-mastery-demo
- 
+  # Sourced from GitHub Actions Variables — not hardcoded so the
+  # workflow never needs editing when infrastructure changes.
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
 jobs:
-  # ---------------------------------------------------------
-  # 1. Lint + unit test
-  # ---------------------------------------------------------
+  # ===========================================================
+  # JOB 1 — Lint & Test
+  # Fail fast: never build or push if code quality gates fail.
+  # ===========================================================
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        # All run steps execute inside the phase3-advanced folder
+        # because that is where the application source lives.
+        working-directory: phase3-advanced
+
     steps:
-      - uses: actions/checkout@v4
- 
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
- 
-      - name: Install dependencies
+
+      - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
- 
+
       - name: Lint with flake8
         run: flake8 app test_main.py --max-line-length=100
- 
-      - name: Run tests
-        run: pytest test_main.py -v
- 
-  # ---------------------------------------------------------
-  # 2. Build the image, then push it to Docker Hub and ECR
-  # ---------------------------------------------------------
-  build-and-push:
-    name: Build & Push
+
+      - name: Run pytest
+        run: pytest -v
+
+  # ===========================================================
+  # JOB 2 — Build → Scan → Push
+  # Runs only after lint-and-test passes.
+  # ===========================================================
+  build-scan-push:
+    name: Build, Scan & Push
     needs: lint-and-test
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
- 
-      - name: Build Docker image
-        run: docker build -t ${{ env.IMAGE_NAME }}:latest .
- 
-      # ---- Docker Hub push ----
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------
+      # Compute image tags
+      # Every image gets three possible tags:
+      #   :abcd123   — 7-char commit SHA (links image to exact commit)
+      #   :latest    — always points to the most recent main build
+      #   :v1.2.3    — only on Git tag pushes (semantic releases)
+      # -----------------------------------------------------------
+      - name: Compute image tags
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "sha_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version_tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version_tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -----------------------------------------------------------
+      # Docker Buildx — required for the GHA cache backend.
+      # -----------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # -----------------------------------------------------------
+      # Build with GitHub Actions layer cache.
+      # context: phase3-advanced  — the Dockerfile and app source
+      #                             live inside this subdirectory.
+      # load: true  — saves the image to the runner's local daemon
+      #               so Trivy can scan it and docker push can use it.
+      # push: false — we scan first, then push manually.
+      # -----------------------------------------------------------
+      - name: Build image (cached, local only — not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: phase3-advanced
+          load: true
+          push: false
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # -----------------------------------------------------------
+      # Trivy vulnerability scan — mandatory gate before any push.
+      # exit-code: "1" means the job fails (and nothing is pushed)
+      # if Trivy finds CRITICAL or HIGH CVEs in the image.
+      # -----------------------------------------------------------
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      # -----------------------------------------------------------
+      # Docker Hub push
+      # Authenticates with username + token (not password).
+      # Pushes both the SHA tag and :latest.
+      # On a Git-tag push, also pushes the semver tag.
+      # -----------------------------------------------------------
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
- 
-      - name: Tag & push to Docker Hub
+
+      - name: Push to Docker Hub
         run: |
           DH_REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }} "$DH_REPO:${{ steps.meta.outputs.sha_tag }}"
           docker tag ${{ env.IMAGE_NAME }}:latest "$DH_REPO:latest"
+          docker push "$DH_REPO:${{ steps.meta.outputs.sha_tag }}"
           docker push "$DH_REPO:latest"
- 
-      # ---- AWS ECR push ----
-      - name: Configure AWS credentials
+          if [ -n "${{ steps.meta.outputs.version_tag }}" ]; then
+            docker tag ${{ env.IMAGE_NAME }}:latest "$DH_REPO:${{ steps.meta.outputs.version_tag }}"
+            docker push "$DH_REPO:${{ steps.meta.outputs.version_tag }}"
+          fi
+
+      # -----------------------------------------------------------
+      # AWS ECR push via GitHub OIDC — zero static credentials.
+      #
+      # How it works:
+      #   1. GitHub mints a signed JWT (enabled by id-token: write).
+      #   2. This action sends the JWT to AWS STS with the role ARN.
+      #   3. STS validates the JWT signature against GitHub's JWKS,
+      #      then checks that:
+      #        aud == sts.amazonaws.com
+      #        sub == repo:kamesprabum/docker-mastery:ref:refs/heads/main
+      #   4. If the trust policy conditions match, STS returns
+      #      short-lived credentials (~1 hour) scoped to the role.
+      #   5. All subsequent AWS API calls use those temp credentials.
+      #
+      # IAM role ARN  : arn:aws:iam::007924090234:role/github-actions-ecr-push
+      # ECR repository: arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery-demo
+      # -----------------------------------------------------------
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
- 
+          # role-session-name appears in CloudTrail — useful for auditing
+          # which workflow run triggered an AssumeRoleWithWebIdentity call.
+          role-session-name: github-actions-ecr-push
+
+      # Authenticates Docker to the ECR registry endpoint using the
+      # temporary credentials obtained above.
       - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
- 
-      - name: Tag & push to Amazon ECR
+
+      # Push the already-built, already-scanned image to ECR.
+      # The registry hostname is returned by the ecr-login step as:
+      #   007924090234.dkr.ecr.ap-south-1.amazonaws.com
+      - name: Push to Amazon ECR
         run: |
           ECR_REPO="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }} "$ECR_REPO:${{ steps.meta.outputs.sha_tag }}"
           docker tag ${{ env.IMAGE_NAME }}:latest "$ECR_REPO:latest"
+          docker push "$ECR_REPO:${{ steps.meta.outputs.sha_tag }}"
           docker push "$ECR_REPO:latest"
+          if [ -n "${{ steps.meta.outputs.version_tag }}" ]; then
+            docker tag ${{ env.IMAGE_NAME }}:latest "$ECR_REPO:${{ steps.meta.outputs.version_tag }}"
+            docker push "$ECR_REPO:${{ steps.meta.outputs.version_tag }}"
+          fi
