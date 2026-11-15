@@ -11,7 +11,7 @@
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:kamesprabum/docker-mastery:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main"
         }
       }
     }

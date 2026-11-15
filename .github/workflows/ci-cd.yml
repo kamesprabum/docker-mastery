@@ -202,7 +202,7 @@ jobs:
       #   3. STS validates the JWT signature against GitHub's JWKS,
       #      then checks that:
       #        aud == sts.amazonaws.com
-      #        sub == repo:kamesprabum/docker-mastery:ref:refs/heads/main
+      #        sub == repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main
       #   4. If the trust policy conditions match, STS returns
       #      short-lived credentials (~1 hour) scoped to the role.
       #   5. All subsequent AWS API calls use those temp credentials.
@@ -210,21 +210,6 @@ jobs:
       # IAM role ARN  : arn:aws:iam::007924090234:role/github-actions-ecr-role
       # ECR repository: arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery-demo
       # -----------------------------------------------------------
-      - name: "TEMP DEBUG: show OIDC token claims (remove after fixing)"
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          # Prints only non-secret claims. The token itself is never echoed.
-          curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
-          | python3 -c '
-          import sys, json, base64
-          tok = json.load(sys.stdin)["value"]
-          p = tok.split(".")[1]
-          claims = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
-          for k in ("iss", "aud", "sub", "repository", "ref", "event_name", "environment"):
-              print(f"{k:12} = {claims.get(k)!r}")
-          '
-
       - name: Configure AWS credentials (OIDC)
         # The role's trust policy only accepts sub = ...:ref:refs/heads/main,
         # so only attempt AWS auth on a push to main.

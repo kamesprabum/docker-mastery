@@ -82,7 +82,7 @@ This JWT contains verifiable claims including:
 |---|---|---|
 | `iss` | `https://token.actions.githubusercontent.com` | Issuer — GitHub's OIDC endpoint |
 | `aud` | `sts.amazonaws.com` | Audience — the AWS service that will consume the token |
-| `sub` | `repo:kamesprabum/docker-mastery:ref:refs/heads/main` | Subject — the specific repo and branch |
+| `sub` | `repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main` | Subject — the specific repo and branch |
 | `repository` | `kamesprabum/docker-mastery` | The full GitHub repository |
 | `ref` | `refs/heads/main` | The Git ref (branch or tag) that triggered the run |
 | `sha` | `a3f9c12...` | The commit SHA |
@@ -139,7 +139,7 @@ no one can assume the role regardless of what permissions it has.
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:kamesprabum/docker-mastery:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main"
         }
       }
     }
@@ -226,7 +226,7 @@ This is the step-by-step flow of what happens when the workflow runs:
 
 3.  GitHub generates a signed JWT containing:
         aud = sts.amazonaws.com
-        sub = repo:kamesprabum/docker-mastery:ref:refs/heads/main
+        sub = repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main
         iss = https://token.actions.githubusercontent.com
         ... (commit SHA, ref, workflow path, etc.)
 
@@ -240,7 +240,7 @@ This is the step-by-step flow of what happens when the workflow runs:
     a. Fetches GitHub's JWKS public keys (cached at the OIDC provider).
     b. Verifies the JWT cryptographic signature.
     c. Checks: aud == sts.amazonaws.com        (matches trust policy condition)
-    d. Checks: sub == repo:kamesprabum/docker-mastery:ref:refs/heads/main
+    d. Checks: sub == repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main
                                                (matches trust policy condition)
 
 6.  Conditions match → STS returns temporary credentials:
@@ -306,7 +306,7 @@ sequenceDiagram
     participant ECR as Amazon ECR<br/>ap-south-1 / docker-mastery-demo
 
     GH->>GHOIDC: Request OIDC JWT<br/>(id-token: write permission)
-    GHOIDC-->>GH: Signed JWT<br/>{aud=sts.amazonaws.com, sub=repo:kamesprabum/docker-mastery:ref:refs/heads/main}
+    GHOIDC-->>GH: Signed JWT<br/>{aud=sts.amazonaws.com, sub=repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main}
 
     GH->>STS: AssumeRoleWithWebIdentity<br/>(JWT + RoleARN)
     STS->>IAM: Validate OIDC provider & trust policy conditions
@@ -450,7 +450,7 @@ Go to the role → **Trust relationships** tab and confirm it matches exactly:
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:kamesprabum/docker-mastery:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main"
         }
       }
     }
@@ -522,7 +522,7 @@ permissions:
 **Fix:**
 1. Go to **IAM → Roles → github-actions-ecr-role → Trust relationships**
 2. Confirm the `sub` value is exactly:
-   `repo:kamesprabum/docker-mastery:ref:refs/heads/main`
+   `repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main`
 3. Confirm `Principal.Federated` is:
    `arn:aws:iam::007924090234:oidc-provider/token.actions.githubusercontent.com`
 
@@ -581,7 +581,7 @@ blocks the push to prevent shipping a vulnerable image.
 - [ ] IAM role `github-actions-ecr-role` created in account `007924090234`
 - [ ] Role ARN: `arn:aws:iam::007924090234:role/github-actions-ecr-role`
 - [ ] Trust policy `aud` condition: `sts.amazonaws.com`
-- [ ] Trust policy `sub` condition: `repo:kamesprabum/docker-mastery:ref:refs/heads/main`
+- [ ] Trust policy `sub` condition: `repo:kamesprabum@204345935/docker-mastery@1459013871:ref:refs/heads/main`
 - [ ] Trust policy `Principal.Federated`: `arn:aws:iam::007924090234:oidc-provider/token.actions.githubusercontent.com`
 - [ ] ECR push policy attached; `ecr:GetAuthorizationToken` has `Resource: "*"`
 - [ ] All other ECR actions scoped to `arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery-demo`
