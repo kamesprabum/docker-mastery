@@ -17,8 +17,8 @@
 | **AWS Region** | `ap-south-1` (Asia Pacific — Mumbai) |
 | **ECR repository name** | `docker-mastery-demo` |
 | **ECR repository ARN** | `arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery-demo` |
-| **IAM role name** | `github-actions-ecr-push` |
-| **IAM role ARN** | `arn:aws:iam::007924090234:role/github-actions-ecr-push` |
+| **IAM role name** | `github-actions-ecr-role` |
+| **IAM role ARN** | `arn:aws:iam::007924090234:role/github-actions-ecr-role` |
 | **OIDC provider URL** | `https://token.actions.githubusercontent.com` |
 | **OIDC audience** | `sts.amazonaws.com` |
 | **OIDC provider ARN** | `arn:aws:iam::007924090234:oidc-provider/token.actions.githubusercontent.com` |
@@ -233,7 +233,7 @@ This is the step-by-step flow of what happens when the workflow runs:
 4.  The `aws-actions/configure-aws-credentials@v4` action calls:
         AWS STS: AssumeRoleWithWebIdentity
           WebIdentityToken = <the JWT from step 3>
-          RoleArn          = arn:aws:iam::007924090234:role/github-actions-ecr-push
+          RoleArn          = arn:aws:iam::007924090234:role/github-actions-ecr-role
           RoleSessionName  = github-actions-ecr-push
 
 5.  AWS STS validates the JWT:
@@ -332,7 +332,7 @@ flowchart LR
     subgraph AWS["AWS Account 007924090234"]
         subgraph IAM["IAM"]
             TP["Trust Policy<br/>aud = sts.amazonaws.com<br/>sub = repo:kamesprabum/docker-mastery<br/>:ref:refs/heads/main"]
-            ROLE["IAM Role<br/>github-actions-ecr-push"]
+            ROLE["IAM Role<br/>github-actions-ecr-role"]
             PP["Permission Policy<br/>ecr:GetAuthorizationToken → Resource: *<br/>ecr:Push* → docker-mastery-demo repo only"]
         end
         STS["AWS STS"]
@@ -425,12 +425,12 @@ aws iam create-open-id-connect-provider \
 
 | Field | Value |
 |---|---|
-| Role name | `github-actions-ecr-push` |
+| Role name | `github-actions-ecr-role` |
 | Description | `Assumed by GitHub Actions OIDC to push images to the docker-mastery-demo ECR repository in ap-south-1` |
 
 6. Click **Create role**
 7. Open the created role and **copy the Role ARN**:
-   `arn:aws:iam::007924090234:role/github-actions-ecr-push`
+   `arn:aws:iam::007924090234:role/github-actions-ecr-role`
 
 ### Step D — Verify the trust policy
 
@@ -476,7 +476,7 @@ Go to the role → **Trust relationships** tab and confirm it matches exactly:
 | Variable name | Exact value |
 |---|---|
 | `AWS_REGION` | `ap-south-1` |
-| `AWS_ROLE_ARN` | `arn:aws:iam::007924090234:role/github-actions-ecr-push` |
+| `AWS_ROLE_ARN` | `arn:aws:iam::007924090234:role/github-actions-ecr-role` |
 | `ECR_REPOSITORY` | `docker-mastery-demo` |
 
 ### Required secrets (Docker Hub only)
@@ -520,7 +520,7 @@ permissions:
 **Cause:** The trust policy `sub` condition does not match the workflow's subject claim.
 
 **Fix:**
-1. Go to **IAM → Roles → github-actions-ecr-push → Trust relationships**
+1. Go to **IAM → Roles → github-actions-ecr-role → Trust relationships**
 2. Confirm the `sub` value is exactly:
    `repo:kamesprabum/docker-mastery:ref:refs/heads/main`
 3. Confirm `Principal.Federated` is:
@@ -568,7 +568,7 @@ blocks the push to prevent shipping a vulnerable image.
 3. Confirm the event shows:
    - `userIdentity.type` = `WebIdentityUser`
    - `userIdentity.principalId` contains `github-actions-ecr-push`
-   - `requestParameters.roleArn` = `arn:aws:iam::007924090234:role/github-actions-ecr-push`
+   - `requestParameters.roleArn` = `arn:aws:iam::007924090234:role/github-actions-ecr-role`
 
 ---
 
@@ -578,8 +578,8 @@ blocks the push to prevent shipping a vulnerable image.
 
 - [ ] GitHub OIDC Identity Provider exists: `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`
 - [ ] Provider ARN: `arn:aws:iam::007924090234:oidc-provider/token.actions.githubusercontent.com`
-- [ ] IAM role `github-actions-ecr-push` created in account `007924090234`
-- [ ] Role ARN: `arn:aws:iam::007924090234:role/github-actions-ecr-push`
+- [ ] IAM role `github-actions-ecr-role` created in account `007924090234`
+- [ ] Role ARN: `arn:aws:iam::007924090234:role/github-actions-ecr-role`
 - [ ] Trust policy `aud` condition: `sts.amazonaws.com`
 - [ ] Trust policy `sub` condition: `repo:kamesprabum/docker-mastery:ref:refs/heads/main`
 - [ ] Trust policy `Principal.Federated`: `arn:aws:iam::007924090234:oidc-provider/token.actions.githubusercontent.com`
@@ -590,7 +590,7 @@ blocks the push to prevent shipping a vulnerable image.
 ### GitHub
 
 - [ ] Variable `AWS_REGION` = `ap-south-1`
-- [ ] Variable `AWS_ROLE_ARN` = `arn:aws:iam::007924090234:role/github-actions-ecr-push`
+- [ ] Variable `AWS_ROLE_ARN` = `arn:aws:iam::007924090234:role/github-actions-ecr-role`
 - [ ] Variable `ECR_REPOSITORY` = `docker-mastery-demo`
 - [ ] Secret `DOCKERHUB_USERNAME` present
 - [ ] Secret `DOCKERHUB_TOKEN` present

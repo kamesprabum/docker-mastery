@@ -29,7 +29,6 @@ name: CI/CD — Build, Scan & Push to Docker Hub and ECR
 # Required GitHub Actions Variables (Settings → Secrets and
 # variables → Actions → Variables tab):
 #   AWS_REGION      = ap-south-1
-#   AWS_ROLE_ARN    = arn:aws:iam::007924090234:role/github-actions-ecr-push
 #   ECR_REPOSITORY  = docker-mastery-demo
 #
 # Required GitHub Actions Secrets (for Docker Hub only):
@@ -62,6 +61,10 @@ env:
   # workflow never needs editing when infrastructure changes.
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  # The IAM role that actually exists in account 007924090234.
+  # Set here (a role ARN is not a secret) so a stale AWS_ROLE_ARN
+  # repository variable can never point the workflow at a missing role.
+  AWS_ROLE_ARN: arn:aws:iam::007924090234:role/github-actions-ecr-role
 
 jobs:
   # ===========================================================
@@ -204,13 +207,16 @@ jobs:
       #      short-lived credentials (~1 hour) scoped to the role.
       #   5. All subsequent AWS API calls use those temp credentials.
       #
-      # IAM role ARN  : arn:aws:iam::007924090234:role/github-actions-ecr-push
+      # IAM role ARN  : arn:aws:iam::007924090234:role/github-actions-ecr-role
       # ECR repository: arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery-demo
       # -----------------------------------------------------------
       - name: Configure AWS credentials (OIDC)
+        # The role's trust policy only accepts sub = ...:ref:refs/heads/main,
+        # so only attempt AWS auth on a push to main.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           # role-session-name appears in CloudTrail — useful for auditing
           # which workflow run triggered an AssumeRoleWithWebIdentity call.
@@ -219,6 +225,7 @@ jobs:
       # Authenticates Docker to the ECR registry endpoint using the
       # temporary credentials obtained above.
       - name: Log in to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -226,6 +233,7 @@ jobs:
       # The registry hostname is returned by the ecr-login step as:
       #   007924090234.dkr.ecr.ap-south-1.amazonaws.com
       - name: Push to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           ECR_REPO="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }} "$ECR_REPO:${{ steps.meta.outputs.sha_tag }}"

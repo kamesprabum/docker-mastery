@@ -130,7 +130,7 @@ jobs:
           fi
 
       # AWS ECR via OIDC
-      # IAM role : arn:aws:iam::007924090234:role/github-actions-ecr-push
+      # IAM role : arn:aws:iam::007924090234:role/github-actions-ecr-role
       # ECR repo : arn:aws:ecr:ap-south-1:007924090234:repository/docker-mastery
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
