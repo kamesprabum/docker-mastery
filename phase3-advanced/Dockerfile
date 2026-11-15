@@ -23,6 +23,9 @@ FROM python:3.12-alpine
 
 WORKDIR /app
 
+# Upgrade Alpine OS packages to ensure security fixes (such as krb5-libs) are applied
+RUN apk update && apk upgrade --no-cache
+
 # Create a dedicated, unprivileged user to run the app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
